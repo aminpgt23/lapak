@@ -294,6 +294,9 @@ router.put('/profile', authenticateToken, uploadAvatar.single('avatar'), async (
     res.json({ user: users[0] });
   } catch (error) {
     console.error('Update profile error:', error);
+    if (error.message && error.message.includes('SUPABASE')) {
+      return res.status(500).json({ error: 'Penyimpanan belum dikonfigurasi. Tambahkan SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY di Vercel Environment Variables.' });
+    }
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });

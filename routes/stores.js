@@ -196,6 +196,9 @@ router.post('/', authenticateToken, upload.single('avatar'), async (req, res) =>
     });
   } catch (error) {
     console.error('Create store error:', error);
+    if (error.message && error.message.includes('SUPABASE')) {
+      return res.status(500).json({ error: 'Penyimpanan belum dikonfigurasi. Tambahkan SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY di Vercel Environment Variables.' });
+    }
     res.status(500).json({ error: 'Failed to create store' });
   } finally {
     connection.release();
@@ -267,6 +270,9 @@ router.put('/my/store', authenticateToken, upload.single('avatar'), async (req, 
     res.json({ store: updated[0] });
   } catch (error) {
     console.error('Update store error:', error);
+    if (error.message && error.message.includes('SUPABASE')) {
+      return res.status(500).json({ error: 'Penyimpanan belum dikonfigurasi. Tambahkan SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY di Vercel Environment Variables.' });
+    }
     res.status(500).json({ error: 'Failed to update store' });
   }
 });

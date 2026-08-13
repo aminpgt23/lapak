@@ -199,6 +199,9 @@ router.post('/', authenticateToken, upload.array('images', 5), async (req, res) 
     });
   } catch (error) {
     console.error('Create product error:', error);
+    if (error.message && error.message.includes('SUPABASE')) {
+      return res.status(500).json({ error: 'Penyimpanan belum dikonfigurasi. Tambahkan SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY di Vercel Environment Variables.' });
+    }
     res.status(500).json({ error: 'Failed to create product' });
   } finally {
     connection.release();
@@ -258,6 +261,9 @@ router.put('/:id', authenticateToken, upload.array('images', 5), async (req, res
     res.json({ message: 'Product updated successfully' });
   } catch (error) {
     console.error('Update product error:', error);
+    if (error.message && error.message.includes('SUPABASE')) {
+      return res.status(500).json({ error: 'Penyimpanan belum dikonfigurasi. Tambahkan SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY di Vercel Environment Variables.' });
+    }
     res.status(500).json({ error: 'Failed to update product' });
   }
 });
