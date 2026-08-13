@@ -173,8 +173,8 @@ async function initializeDatabase() {
         delivery_fee DECIMAL(12, 2) DEFAULT 0,
         total_price DECIMAL(12, 2) NOT NULL,
         status ENUM('pending', 'confirmed', 'completed', 'cancelled') DEFAULT 'pending',
-        buyer_qr_code VARCHAR(500),
-        seller_qr_code VARCHAR(500),
+        buyer_qr_code TEXT,
+        seller_qr_code TEXT,
         buyer_scanned_at DATETIME NULL,
         seller_scanned_at DATETIME NULL,
         completed_at DATETIME NULL,
@@ -247,6 +247,15 @@ async function initializeDatabase() {
 
     try {
       await connection.query(`ALTER TABLE orders ADD COLUMN delivery_fee DECIMAL(12, 2) DEFAULT 0`);
+    } catch (_) {}
+
+    // QR code data URL bisa mencapai >4KB, ubah kolom dari VARCHAR(500) ke TEXT
+    try {
+      await connection.query(`ALTER TABLE orders MODIFY buyer_qr_code TEXT`);
+    } catch (_) {}
+
+    try {
+      await connection.query(`ALTER TABLE orders MODIFY seller_qr_code TEXT`);
     } catch (_) {}
 
     // App settings table
