@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const path = require('path');
 const { pool } = require('../db');
 const { authenticateToken, optionalAuth } = require('../middleware/auth');
 
@@ -9,13 +10,12 @@ const router = express.Router();
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (allowedTypes.includes(file.mimetype)) {
+    if (file.mimetype && file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Only JPEG, PNG, and WebP are allowed.'));
+      cb(new Error('Hanya file gambar yang diizinkan (JPG, PNG, WebP, GIF, dll).'));
     }
   }
 });
@@ -35,7 +35,7 @@ router.get('/', optionalAuth, async (req, res) => {
     } = req.query;
 
     const offset = (page - 1) * limit;
-    let whereClause = 'WHERE p.is_active = TRUE AND s.is_active = TRUE';
+    let whereClause = 'WHERE p.is_active = TRUE AND s.is_active = TRUE AND s.is_open = TRUE';
     const params = [];
 
     if (store_id) {
@@ -152,7 +152,7 @@ router.post('/', authenticateToken, upload.array('images', 5), async (req, res) 
     }
 
     const storeId = stores[0].id;
-    const { name, description, price, stock, category, condition_type } = req.body;
+    const { name, description, price, stock, category, condition_type, delivery_type, delivery_fee } = req.body;
 
     // Validation
     if (!name || !price) {
@@ -163,10 +163,23 @@ router.post('/', authenticateToken, upload.array('images', 5), async (req, res) 
       return res.status(400).json({ error: 'Price must be greater than 0' });
     }
 
+    const deliveryMode = delivery_type || 'pickup';
+    if (!['pickup', 'delivery', 'both'].includes(deliveryMode)) {
+      return res.status(400).json({ error: 'Invalid delivery type' });
+    }
+
+    let fee = 0;
+    if (deliveryMode !== 'pickup') {
+      fee = parseFloat(delivery_fee) || 0;
+      if (fee < 0 || fee > 10000) {
+        return res.status(400).json({ error: 'Ongkir maksimal Rp 10.000 dan tidak boleh negatif' });
+      }
+    }
+
     const [result] = await connection.query(
-      `INSERT INTO products (store_id, name, description, price, stock, category, condition_type)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [storeId, name, description || null, price, stock || 0, category || null, condition_type || 'new']
+      `INSERT INTO products (store_id, name, description, price, stock, category, condition_type, delivery_type, delivery_fee)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [storeId, name, description || null, price, stock || 0, category || null, condition_type || 'new', deliveryMode, fee]
     );
 
     const productId = result.insertId;
@@ -175,8 +188,8 @@ router.post('/', authenticateToken, upload.array('images', 5), async (req, res) 
     if (req.files && req.files.length > 0) {
       for (let i = 0; i < req.files.length; i++) {
         const file = req.files[i];
-        // In production, upload to cloud storage
-        const imageUrl = `/uploads/products/${productId}_${i}_${Date.now()}.jpg`;
+        const ext = path.extname(file.originalname) || '.jpg';
+        const imageUrl = `/uploads/products/${productId}_${i}_${Date.now()}${ext}`;
         const isPrimary = i === 0;
         
         await connection.query(
@@ -213,19 +226,33 @@ router.put('/:id', authenticateToken, upload.array('images', 5), async (req, res
       return res.status(404).json({ error: 'Product not found or unauthorized' });
     }
 
-    const { name, description, price, stock, category, condition_type, is_active } = req.body;
+    const { name, description, price, stock, category, condition_type, delivery_type, delivery_fee, is_active } = req.body;
+
+    const deliveryMode = delivery_type || products[0].delivery_type || 'pickup';
+    if (!['pickup', 'delivery', 'both'].includes(deliveryMode)) {
+      return res.status(400).json({ error: 'Invalid delivery type' });
+    }
+
+    let fee = products[0].delivery_fee || 0;
+    if (delivery_fee !== undefined) {
+      fee = parseFloat(delivery_fee) || 0;
+      if (fee < 0 || fee > 10000) {
+        return res.status(400).json({ error: 'Ongkir maksimal Rp 10.000 dan tidak boleh negatif' });
+      }
+    }
 
     await pool.query(
       `UPDATE products SET name = ?, description = ?, price = ?, stock = ?, 
-       category = ?, condition_type = ?, is_active = ?
+       category = ?, condition_type = ?, delivery_type = ?, delivery_fee = ?, is_active = ?
        WHERE id = ?`,
-      [name, description, price, stock, category, condition_type, is_active, req.params.id]
+      [name, description, price, stock, category, condition_type, deliveryMode, fee, is_active, req.params.id]
     );
 
     // Handle new images
     if (req.files && req.files.length > 0) {
       for (let i = 0; i < req.files.length; i++) {
-        const imageUrl = `/uploads/products/${req.params.id}_${Date.now()}_${i}.jpg`;
+        const ext = path.extname(req.files[i].originalname) || '.jpg';
+        const imageUrl = `/uploads/products/${req.params.id}_${Date.now()}_${i}${ext}`;
         const isPrimary = i === 0;
         
         await pool.query(

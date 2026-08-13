@@ -28,15 +28,62 @@ async function initializeDatabase() {
         password_hash VARCHAR(255) NOT NULL,
         full_name VARCHAR(255),
         phone_number VARCHAR(20),
-        role ENUM('buyer', 'seller', 'both') DEFAULT 'buyer',
+        role ENUM('buyer', 'seller', 'both', 'admin') DEFAULT 'buyer',
         email_verified BOOLEAN DEFAULT FALSE,
+        wa_verified BOOLEAN DEFAULT FALSE,
+        is_active BOOLEAN DEFAULT TRUE,
         verification_token VARCHAR(255),
         verification_expires DATETIME,
         avatar_url VARCHAR(500),
+        seller_status ENUM('none', 'pending', 'approved', 'rejected') DEFAULT 'none',
+        agreed_terms_at DATETIME NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    // Migrasi tabel yang sudah ada (CREATE IF NOT EXISTS tidak mengubah struktur lama)
+    try {
+      await connection.query(
+        `ALTER TABLE users MODIFY role ENUM('buyer', 'seller', 'both', 'admin') DEFAULT 'buyer'`
+      );
+    } catch (_) {}
+
+    try {
+      await connection.query(
+        `ALTER TABLE users ADD COLUMN seller_status ENUM('none', 'pending', 'approved', 'rejected') DEFAULT 'none'`
+      );
+    } catch (_) {}
+
+    try {
+      await connection.query(`ALTER TABLE users ADD COLUMN wa_verified BOOLEAN DEFAULT FALSE`);
+    } catch (_) {}
+
+    try {
+      await connection.query(`ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT TRUE`);
+    } catch (_) {}
+
+    try {
+      await connection.query(`ALTER TABLE users ADD COLUMN agreed_terms_at DATETIME NULL`);
+    } catch (_) {}
+
+    // Seed akun admin (kredensial bisa diubah via env)
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@lapak.id';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+    const [adminRows] = await connection.query(
+      'SELECT id FROM users WHERE email = ?',
+      [adminEmail]
+    );
+    if (adminRows.length === 0) {
+      const bcrypt = require('bcryptjs');
+      const adminHash = await bcrypt.hash(adminPassword, 10);
+      await connection.query(
+        `INSERT INTO users (email, password_hash, full_name, role, email_verified, wa_verified, seller_status, agreed_terms_at)
+         VALUES (?, ?, 'Admin Lapak', 'admin', TRUE, TRUE, 'approved', NOW())`,
+        [adminEmail, adminHash]
+      );
+      console.log(`Admin account seeded: ${adminEmail}`);
+    }
 
     // Stores table
     await connection.query(`
@@ -51,6 +98,7 @@ async function initializeDatabase() {
         longitude DECIMAL(11, 8),
         avatar_url VARCHAR(500),
         is_active BOOLEAN DEFAULT TRUE,
+        is_open BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -58,6 +106,10 @@ async function initializeDatabase() {
         INDEX idx_active (is_active)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    try {
+      await connection.query(`ALTER TABLE stores ADD COLUMN is_open BOOLEAN DEFAULT TRUE`);
+    } catch (_) {}
 
     // Products table
     await connection.query(`
@@ -70,6 +122,8 @@ async function initializeDatabase() {
         stock INT DEFAULT 0,
         category VARCHAR(100),
         condition_type ENUM('new', 'used') DEFAULT 'new',
+        delivery_type ENUM('pickup', 'delivery', 'both') DEFAULT 'pickup',
+        delivery_fee DECIMAL(12, 2) DEFAULT 0,
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -79,6 +133,16 @@ async function initializeDatabase() {
         INDEX idx_category (category)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    try {
+      await connection.query(
+        `ALTER TABLE products ADD COLUMN delivery_type ENUM('pickup', 'delivery', 'both') DEFAULT 'pickup'`
+      );
+    } catch (_) {}
+
+    try {
+      await connection.query(`ALTER TABLE products ADD COLUMN delivery_fee DECIMAL(12, 2) DEFAULT 0`);
+    } catch (_) {}
 
     // Product images table
     await connection.query(`
@@ -105,6 +169,8 @@ async function initializeDatabase() {
         product_id INT NOT NULL,
         quantity INT DEFAULT 1,
         unit_price DECIMAL(12, 2) NOT NULL,
+        delivery_type ENUM('pickup', 'delivery') DEFAULT 'pickup',
+        delivery_fee DECIMAL(12, 2) DEFAULT 0,
         total_price DECIMAL(12, 2) NOT NULL,
         status ENUM('pending', 'confirmed', 'completed', 'cancelled') DEFAULT 'pending',
         buyer_qr_code VARCHAR(500),
@@ -174,6 +240,36 @@ async function initializeDatabase() {
         INDEX idx_is_read (is_read)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    try {
+      await connection.query(`ALTER TABLE orders ADD COLUMN delivery_type ENUM('pickup', 'delivery') DEFAULT 'pickup'`);
+    } catch (_) {}
+
+    try {
+      await connection.query(`ALTER TABLE orders ADD COLUMN delivery_fee DECIMAL(12, 2) DEFAULT 0`);
+    } catch (_) {}
+
+    // App settings table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        setting_key VARCHAR(100) PRIMARY KEY,
+        setting_value TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Seed pengaturan default
+    const defaultSettings = {
+      admin_wa_number: '085943576826',
+      slogan: 'Anda lapar saat kerja? Cari disini.. belanja & tetap mematuhi aturan toko dan perusahaan anda',
+      delivery_fee_max: '10000'
+    };
+    for (const [key, value] of Object.entries(defaultSettings)) {
+      await connection.query(
+        'INSERT IGNORE INTO app_settings (setting_key, setting_value) VALUES (?, ?)',
+        [key, value]
+      );
+    }
 
     // QR codes table (for generating unique QR codes)
     await connection.query(`

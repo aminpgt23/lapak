@@ -47,7 +47,7 @@ async function checkAndCompleteOrder(connection, orderId) {
 router.post('/', authenticateToken, async (req, res) => {
   const connection = await pool.getConnection();
   try {
-    const { product_id, quantity = 1, notes } = req.body;
+    const { product_id, quantity = 1, notes, delivery_type } = req.body;
 
     if (!product_id) {
       return res.status(400).json({ error: 'Product ID is required' });
@@ -76,6 +76,22 @@ router.post('/', authenticateToken, async (req, res) => {
 
     const product = products[0];
 
+    // Tentukan mode pengiriman (validasi sesuai opsi produk)
+    const productMode = product.delivery_type || 'pickup';
+    let orderDeliveryType = 'pickup';
+    let orderDeliveryFee = 0;
+
+    if (delivery_type === 'delivery' && ['delivery', 'both'].includes(productMode)) {
+      orderDeliveryType = 'delivery';
+      orderDeliveryFee = parseFloat(product.delivery_fee) || 0;
+    } else if (delivery_type === 'delivery') {
+      await connection.rollback();
+      return res.status(400).json({ error: 'Produk ini tidak menyediakan pengantaran' });
+    } else if (productMode === 'delivery') {
+      orderDeliveryType = 'delivery';
+      orderDeliveryFee = parseFloat(product.delivery_fee) || 0;
+    }
+
     // Check stock
     if (product.stock < quantity) {
       await connection.rollback();
@@ -90,13 +106,13 @@ router.post('/', authenticateToken, async (req, res) => {
 
     // Create order
     const orderNumber = generateOrderNumber();
-    const totalPrice = product.price * quantity;
+    const totalPrice = (product.price * quantity) + orderDeliveryFee;
 
     const [orderResult] = await connection.query(
-      `INSERT INTO orders (order_number, buyer_id, seller_id, store_id, product_id, quantity, unit_price, total_price, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO orders (order_number, buyer_id, seller_id, store_id, product_id, quantity, unit_price, delivery_type, delivery_fee, total_price, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [orderNumber, req.user.user_id, product.seller_id, product.store_id, product_id,
-       quantity, product.price, totalPrice, notes || null]
+       quantity, product.price, orderDeliveryType, orderDeliveryFee, totalPrice, notes || null]
     );
 
     const orderId = orderResult.insertId;
@@ -140,6 +156,8 @@ router.post('/', authenticateToken, async (req, res) => {
       message: 'Order created successfully. Please scan the QR code to complete the deal.',
       order_id: orderId,
       order_number: orderNumber,
+      delivery_type: orderDeliveryType,
+      delivery_fee: orderDeliveryFee,
       total_price: totalPrice,
       buyer_qr_code: buyerQRCode,
       seller_qr_code: sellerQRCode

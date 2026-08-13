@@ -2,11 +2,27 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const multer = require('multer');
+const path = require('path');
 const nodemailer = require('nodemailer');
 const { pool } = require('../db');
 const { authenticateToken } = require('../middleware/auth');
+const { normalizePhone } = require('../utils/phone');
 
 const router = express.Router();
+
+// Upload avatar profile — terima semua type gambar
+const uploadAvatar = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype && file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Hanya file gambar yang diizinkan (JPG, PNG, WebP, GIF, dll).'));
+    }
+  }
+});
 
 // Generate verification token
 function generateVerificationToken() {
@@ -48,7 +64,7 @@ async function sendVerificationEmail(email, token) {
 router.post('/register', async (req, res) => {
   const connection = await pool.getConnection();
   try {
-    const { email, password, full_name, phone_number } = req.body;
+    const { email, password, full_name, phone_number, agree_terms } = req.body;
 
     // Validation
     if (!email || !password) {
@@ -58,6 +74,12 @@ router.post('/register', async (req, res) => {
     if (password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
+
+    if (agree_terms !== true) {
+      return res.status(400).json({ error: 'Anda harus menyetujui Syarat & Ketentuan untuk membuat akun' });
+    }
+
+    const normalizedPhone = normalizePhone(phone_number);
 
     await connection.beginTransaction();
 
@@ -75,24 +97,17 @@ router.post('/register', async (req, res) => {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Generate verification token
-    const verificationToken = generateVerificationToken();
-    const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-
     // Insert user
     const [result] = await connection.query(
-      `INSERT INTO users (email, password_hash, full_name, phone_number, verification_token, verification_expires)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [email, passwordHash, full_name || null, phone_number || null, verificationToken, verificationExpires]
+      `INSERT INTO users (email, password_hash, full_name, phone_number, agreed_terms_at)
+       VALUES (?, ?, ?, ?, NOW())`,
+      [email, passwordHash, full_name || null, normalizedPhone]
     );
 
     await connection.commit();
 
-    // Send verification email
-    await sendVerificationEmail(email, verificationToken);
-
     res.status(201).json({
-      message: 'Registration successful. Please check your email to verify your account.',
+      message: 'Registrasi berhasil. Silakan login. Untuk menjadi penjual, nomor WhatsApp Anda harus diverifikasi admin.',
       user_id: result.insertId
     });
   } catch (error) {
@@ -114,7 +129,7 @@ router.post('/login', async (req, res) => {
     }
 
     const [users] = await pool.query(
-      'SELECT id, email, password_hash, full_name, phone_number, role, email_verified FROM users WHERE email = ?',
+      'SELECT id, email, password_hash, full_name, phone_number, role, email_verified, wa_verified, is_active, seller_status FROM users WHERE email = ?',
       [email]
     );
 
@@ -123,6 +138,10 @@ router.post('/login', async (req, res) => {
     }
 
     const user = users[0];
+
+    if (!user.is_active) {
+      return res.status(403).json({ error: 'Akun Anda dinonaktifkan. Hubungi admin.' });
+    }
 
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
@@ -135,7 +154,8 @@ router.post('/login', async (req, res) => {
         user_id: user.id, 
         email: user.email, 
         role: user.role,
-        email_verified: user.email_verified
+        email_verified: user.email_verified,
+        wa_verified: user.wa_verified
       },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
@@ -231,7 +251,7 @@ router.post('/resend-verification', authenticateToken, async (req, res) => {
 router.get('/me', authenticateToken, async (req, res) => {
   try {
     const [users] = await pool.query(
-      'SELECT id, email, full_name, phone_number, role, email_verified, avatar_url, created_at FROM users WHERE id = ?',
+      'SELECT id, email, full_name, phone_number, role, email_verified, wa_verified, is_active, avatar_url, seller_status, created_at FROM users WHERE id = ?',
       [req.user.user_id]
     );
 
@@ -246,18 +266,26 @@ router.get('/me', authenticateToken, async (req, res) => {
   }
 });
 
-// Update profile
-router.put('/profile', authenticateToken, async (req, res) => {
+// Update profile (bisa include foto avatar)
+router.put('/profile', authenticateToken, uploadAvatar.single('avatar'), async (req, res) => {
   try {
-    const { full_name, phone_number, avatar_url } = req.body;
+    const { full_name, phone_number } = req.body;
+    const normalizedPhone = normalizePhone(phone_number);
+
+    let avatarUrl = null;
+    if (req.file) {
+      const ext = path.extname(req.file.originalname) || '.jpg';
+      avatarUrl = `/uploads/users/${req.user.user_id}_${Date.now()}${ext}`;
+    }
 
     await pool.query(
-      'UPDATE users SET full_name = ?, phone_number = ?, avatar_url = ? WHERE id = ?',
-      [full_name || null, phone_number || null, avatar_url || null, req.user.user_id]
+      `UPDATE users SET full_name = COALESCE(?, full_name), phone_number = COALESCE(?, phone_number), 
+       avatar_url = COALESCE(?, avatar_url) WHERE id = ?`,
+      [full_name || null, normalizedPhone, avatarUrl, req.user.user_id]
     );
 
     const [users] = await pool.query(
-      'SELECT id, email, full_name, phone_number, role, email_verified, avatar_url FROM users WHERE id = ?',
+      'SELECT id, email, full_name, phone_number, role, email_verified, wa_verified, is_active, avatar_url, seller_status FROM users WHERE id = ?',
       [req.user.user_id]
     );
 
@@ -268,11 +296,11 @@ router.put('/profile', authenticateToken, async (req, res) => {
   }
 });
 
-// Update role to seller (after verification)
+// Update role to seller (after WA verified by admin + approval)
 router.post('/become-seller', authenticateToken, async (req, res) => {
   try {
     const [users] = await pool.query(
-      'SELECT email_verified FROM users WHERE id = ?',
+      'SELECT wa_verified, seller_status FROM users WHERE id = ?',
       [req.user.user_id]
     );
 
@@ -280,33 +308,24 @@ router.post('/become-seller', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    if (!users[0].email_verified) {
-      return res.status(400).json({ error: 'Please verify your email first before opening a store' });
+    if (!users[0].wa_verified) {
+      return res.status(400).json({ error: 'Nomor WhatsApp Anda belum diverifikasi admin. Hubungi admin untuk verifikasi.' });
     }
 
-    const currentRole = req.user.role;
-    let newRole = 'seller';
-    if (currentRole === 'buyer') newRole = 'seller';
-    else if (currentRole === 'both') newRole = 'both';
+    if (users[0].seller_status === 'approved') {
+      return res.json({ message: 'You are already approved as a seller', seller_status: 'approved' });
+    }
 
+    // Set status pending — butuh persetujuan admin
     await pool.query(
-      'UPDATE users SET role = ? WHERE id = ?',
-      [newRole, req.user.user_id]
+      "UPDATE users SET seller_status = 'pending' WHERE id = ?",
+      [req.user.user_id]
     );
 
-    // Generate new token with updated role
-    const token = jwt.sign(
-      { 
-        user_id: req.user.user_id, 
-        email: req.user.email, 
-        role: newRole,
-        email_verified: true
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
-
-    res.json({ message: 'You can now open a store!', token, role: newRole });
+    res.json({
+      message: 'Permintaan menjadi penjual terkirim. Tunggu persetujuan admin.',
+      seller_status: 'pending'
+    });
   } catch (error) {
     console.error('Become seller error:', error);
     res.status(500).json({ error: 'Failed to update role' });

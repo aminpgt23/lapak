@@ -1,7 +1,9 @@
 const express = require('express');
 const multer = require('multer');
+const path = require('path');
 const { pool } = require('../db');
 const { authenticateToken, optionalAuth } = require('../middleware/auth');
+const { normalizePhone } = require('../utils/phone');
 
 const router = express.Router();
 
@@ -9,13 +11,12 @@ const router = express.Router();
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (allowedTypes.includes(file.mimetype)) {
+    if (file.mimetype && file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Only JPEG, PNG, and WebP are allowed.'));
+      cb(new Error('Hanya file gambar yang diizinkan (JPG, PNG, WebP, GIF, dll).'));
     }
   }
 });
@@ -34,7 +35,7 @@ router.get('/', optionalAuth, async (req, res) => {
     } = req.query;
 
     const offset = (page - 1) * limit;
-    let whereClause = 'WHERE s.is_active = TRUE';
+    let whereClause = 'WHERE s.is_active = TRUE AND s.is_open = TRUE';
     const params = [];
 
     if (search) {
@@ -169,7 +170,7 @@ router.post('/', authenticateToken, upload.single('avatar'), async (req, res) =>
     }
 
     // Use user's phone if not provided
-    const storePhone = phone_number || users[0].phone_number;
+    const storePhone = normalizePhone(phone_number || users[0].phone_number);
     if (!storePhone) {
       return res.status(400).json({ error: 'Phone number is required for store (for digital receipts)' });
     }
@@ -177,9 +178,8 @@ router.post('/', authenticateToken, upload.single('avatar'), async (req, res) =>
     // Handle avatar upload (in production, upload to cloud storage)
     let avatarUrl = null;
     if (req.file) {
-      // In production, upload to S3/Cloudinary and get URL
-      // For now, we'll use a placeholder
-      avatarUrl = `/uploads/stores/${req.user.user_id}_${Date.now()}.jpg`;
+      const ext = path.extname(req.file.originalname) || '.jpg';
+      avatarUrl = `/uploads/stores/${req.user.user_id}_${Date.now()}${ext}`;
     }
 
     const [result] = await connection.query(
@@ -240,26 +240,29 @@ router.put('/my/store', authenticateToken, upload.single('avatar'), async (req, 
       return res.status(404).json({ error: 'Store not found' });
     }
 
-    const { name, description, phone_number, address, latitude, longitude, is_active } = req.body;
+    const { name, description, phone_number, address, latitude, longitude, is_open } = req.body;
+    const normalizedPhone = normalizePhone(phone_number);
 
     // Validate phone number
-    if (phone_number && phone_number.length < 10) {
+    if (phone_number && normalizedPhone && normalizedPhone.length < 12) {
       return res.status(400).json({ error: 'Valid phone number is required for digital receipts' });
     }
 
     let avatarUrl = stores[0].avatar_url;
     if (req.file) {
-      avatarUrl = `/uploads/stores/${req.user.user_id}_${Date.now()}.jpg`;
+      const ext = path.extname(req.file.originalname) || '.jpg';
+      avatarUrl = `/uploads/stores/${req.user.user_id}_${Date.now()}${ext}`;
     }
 
     await pool.query(
       `UPDATE stores SET name = ?, description = ?, phone_number = ?, address = ?, 
-       latitude = ?, longitude = ?, avatar_url = ?, is_active = ?
+       latitude = ?, longitude = ?, avatar_url = ?, is_active = ?, is_open = ?
        WHERE user_id = ?`,
       [name || stores[0].name, description || stores[0].description, 
-       phone_number || stores[0].phone_number, address || stores[0].address,
+       normalizedPhone || stores[0].phone_number, address || stores[0].address,
        latitude || stores[0].latitude, longitude || stores[0].longitude,
        avatarUrl, is_active !== undefined ? is_active : stores[0].is_active,
+       is_open !== undefined ? is_open : stores[0].is_open,
        req.user.user_id]
     );
 
@@ -268,6 +271,29 @@ router.put('/my/store', authenticateToken, upload.single('avatar'), async (req, 
   } catch (error) {
     console.error('Update store error:', error);
     res.status(500).json({ error: 'Failed to update store' });
+  }
+});
+
+// Toggle buka/tutup toko
+router.post('/my/store/toggle-open', authenticateToken, async (req, res) => {
+  try {
+    const [stores] = await pool.query(
+      'SELECT id, is_open FROM stores WHERE user_id = ?',
+      [req.user.user_id]
+    );
+
+    if (stores.length === 0) {
+      return res.status(404).json({ error: 'Store not found' });
+    }
+
+    const newOpen = !stores[0].is_open;
+    await pool.query('UPDATE stores SET is_open = ? WHERE id = ?', [newOpen, stores[0].id]);
+
+    const [updated] = await pool.query('SELECT * FROM stores WHERE id = ?', [stores[0].id]);
+    res.json({ store: updated[0] });
+  } catch (error) {
+    console.error('Toggle store open error:', error);
+    res.status(500).json({ error: 'Failed to toggle store status' });
   }
 });
 

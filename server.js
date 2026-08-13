@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const path = require('path');
+const multer = require('multer');
 require('dotenv').config();
 const { initializeDatabase, pool } = require('./db');
 
@@ -55,6 +56,8 @@ const orderRoutes = require('./routes/orders');
 const favoriteRoutes = require('./routes/favorites');
 const chatRoutes = require('./routes/chat');
 const notificationRoutes = require('./routes/notifications');
+const adminRoutes = require('./routes/admin');
+const settingsRoutes = require('./routes/settings');
 
 // Mount routes
 app.use('/api/auth', authRoutes);
@@ -64,6 +67,8 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/favorites', favoriteRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Health check
 app.get('/health', async (req, res) => {
@@ -187,6 +192,9 @@ io.on('connection', (socket) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ error: `Upload gagal: ${err.message}` });
+  }
   console.error('Error:', err.message);
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
