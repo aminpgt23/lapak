@@ -8,17 +8,12 @@ const { normalizePhone } = require('../utils/phone');
 const router = express.Router();
 
 // Configure multer for file uploads
+const { imageFileFilter } = require('../utils/upload');
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype && file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Hanya file gambar yang diizinkan (JPG, PNG, WebP, GIF, dll).'));
-    }
-  }
+  fileFilter: imageFileFilter
 });
 
 // Get all stores (with pagination, search, filters)

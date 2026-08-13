@@ -7,17 +7,12 @@ const { authenticateToken, optionalAuth } = require('../middleware/auth');
 const router = express.Router();
 
 // Configure multer for product images
+const { imageFileFilter } = require('../utils/upload');
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage,
   limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype && file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Hanya file gambar yang diizinkan (JPG, PNG, WebP, GIF, dll).'));
-    }
-  }
+  fileFilter: imageFileFilter
 });
 
 // Get products (with filters)

@@ -12,16 +12,12 @@ const { normalizePhone } = require('../utils/phone');
 const router = express.Router();
 
 // Upload avatar profile — terima semua type gambar
+const { imageFileFilter } = require('../utils/upload');
+
 const uploadAvatar = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype && file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Hanya file gambar yang diizinkan (JPG, PNG, WebP, GIF, dll).'));
-    }
-  }
+  fileFilter: imageFileFilter
 });
 
 // Generate verification token
