@@ -3,11 +3,11 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const multer = require('multer');
-const path = require('path');
 const nodemailer = require('nodemailer');
 const { pool } = require('../db');
 const { authenticateToken } = require('../middleware/auth');
 const { normalizePhone } = require('../utils/phone');
+const { uploadImage, deleteImage } = require('../utils/storage');
 
 const router = express.Router();
 
@@ -270,9 +270,11 @@ router.put('/profile', authenticateToken, uploadAvatar.single('avatar'), async (
 
     let avatarUrl = null;
     if (req.file) {
-      const ext = path.extname(req.file.originalname) || '.jpg';
-      avatarUrl = `/uploads/users/${req.user.user_id}_${Date.now()}${ext}`;
+      avatarUrl = await uploadImage(req.file.buffer, 'users', req.file.originalname, String(req.user.user_id));
     }
+
+    const [oldUsers] = await pool.query('SELECT avatar_url FROM users WHERE id = ?', [req.user.user_id]);
+    const oldAvatar = oldUsers[0]?.avatar_url || null;
 
     await pool.query(
       `UPDATE users SET full_name = COALESCE(?, full_name), phone_number = COALESCE(?, phone_number), 
@@ -284,6 +286,10 @@ router.put('/profile', authenticateToken, uploadAvatar.single('avatar'), async (
       'SELECT id, email, full_name, phone_number, role, email_verified, wa_verified, is_active, avatar_url, seller_status FROM users WHERE id = ?',
       [req.user.user_id]
     );
+
+    if (req.file && oldAvatar && oldAvatar !== avatarUrl) {
+      await deleteImage(oldAvatar);
+    }
 
     res.json({ user: users[0] });
   } catch (error) {

@@ -1,8 +1,8 @@
 const express = require('express');
 const multer = require('multer');
-const path = require('path');
 const { pool } = require('../db');
 const { authenticateToken, optionalAuth } = require('../middleware/auth');
+const { uploadImage, deleteImage } = require('../utils/storage');
 
 const router = express.Router();
 
@@ -183,8 +183,7 @@ router.post('/', authenticateToken, upload.array('images', 5), async (req, res) 
     if (req.files && req.files.length > 0) {
       for (let i = 0; i < req.files.length; i++) {
         const file = req.files[i];
-        const ext = path.extname(file.originalname) || '.jpg';
-        const imageUrl = `/uploads/products/${productId}_${i}_${Date.now()}${ext}`;
+        const imageUrl = await uploadImage(file.buffer, 'products', file.originalname, `${productId}_${i}`);
         const isPrimary = i === 0;
         
         await connection.query(
@@ -246,8 +245,7 @@ router.put('/:id', authenticateToken, upload.array('images', 5), async (req, res
     // Handle new images
     if (req.files && req.files.length > 0) {
       for (let i = 0; i < req.files.length; i++) {
-        const ext = path.extname(req.files[i].originalname) || '.jpg';
-        const imageUrl = `/uploads/products/${req.params.id}_${Date.now()}_${i}${ext}`;
+        const imageUrl = await uploadImage(req.files[i].buffer, 'products', req.files[i].originalname, `${req.params.id}_${Date.now()}_${i}`);
         const isPrimary = i === 0;
         
         await pool.query(
@@ -280,6 +278,11 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 
     // Soft delete
     await pool.query('UPDATE products SET is_active = FALSE WHERE id = ?', [req.params.id]);
+
+    const [images] = await pool.query('SELECT image_url FROM product_images WHERE product_id = ?', [req.params.id]);
+    for (const img of images) {
+      await deleteImage(img.image_url);
+    }
 
     res.json({ message: 'Product deleted successfully' });
   } catch (error) {

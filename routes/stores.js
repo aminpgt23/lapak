@@ -1,9 +1,9 @@
 const express = require('express');
 const multer = require('multer');
-const path = require('path');
 const { pool } = require('../db');
 const { authenticateToken, optionalAuth } = require('../middleware/auth');
 const { normalizePhone } = require('../utils/phone');
+const { uploadImage, deleteImage } = require('../utils/storage');
 
 const router = express.Router();
 
@@ -170,11 +170,9 @@ router.post('/', authenticateToken, upload.single('avatar'), async (req, res) =>
       return res.status(400).json({ error: 'Phone number is required for store (for digital receipts)' });
     }
 
-    // Handle avatar upload (in production, upload to cloud storage)
     let avatarUrl = null;
     if (req.file) {
-      const ext = path.extname(req.file.originalname) || '.jpg';
-      avatarUrl = `/uploads/stores/${req.user.user_id}_${Date.now()}${ext}`;
+      avatarUrl = await uploadImage(req.file.buffer, 'stores', req.file.originalname, String(req.user.user_id));
     }
 
     const [result] = await connection.query(
@@ -245,8 +243,7 @@ router.put('/my/store', authenticateToken, upload.single('avatar'), async (req, 
 
     let avatarUrl = stores[0].avatar_url;
     if (req.file) {
-      const ext = path.extname(req.file.originalname) || '.jpg';
-      avatarUrl = `/uploads/stores/${req.user.user_id}_${Date.now()}${ext}`;
+      avatarUrl = await uploadImage(req.file.buffer, 'stores', req.file.originalname, String(req.user.user_id));
     }
 
     await pool.query(
@@ -262,6 +259,11 @@ router.put('/my/store', authenticateToken, upload.single('avatar'), async (req, 
     );
 
     const [updated] = await pool.query('SELECT * FROM stores WHERE user_id = ?', [req.user.user_id]);
+
+    if (req.file && stores[0].avatar_url && stores[0].avatar_url !== avatarUrl) {
+      await deleteImage(stores[0].avatar_url);
+    }
+
     res.json({ store: updated[0] });
   } catch (error) {
     console.error('Update store error:', error);
