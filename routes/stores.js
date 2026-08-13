@@ -192,7 +192,7 @@ router.post('/', authenticateToken, upload.single('avatar'), async (req, res) =>
     // Update user role to seller if they were buyer
     if (users[0].role === 'buyer') {
       await connection.query(
-        'UPDATE users SET role = "both" WHERE id = ?',
+        'UPDATE users SET role = \'both\' WHERE id = ?',
         [req.user.user_id]
       );
     }

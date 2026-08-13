@@ -35,7 +35,7 @@ async function checkAndCompleteOrder(connection, orderId) {
 
   if (order.length > 0 && order[0].buyer_scanned_at && order[0].seller_scanned_at) {
     await connection.query(
-      'UPDATE orders SET status = "completed", completed_at = NOW() WHERE id = ?',
+      'UPDATE orders SET status = \'completed\', completed_at = NOW() WHERE id = ?',
       [orderId]
     );
     return true;
