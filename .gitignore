@@ -3,6 +3,10 @@ node_modules/
 
 # Environment files
 .env
+.env.local
+
+# Vercel
+.vercel/
 
 # Logs
 *.log

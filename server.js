@@ -23,6 +23,30 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Cold start serverless (Vercel) tidak memanggil startServer(), jadi pastikan schema ada di request pertama
+let dbInitPromise = null;
+function ensureDatabase() {
+  if (!dbInitPromise) {
+    dbInitPromise = initializeDatabase().catch((error) => {
+      console.error('Database init failed (will retry on next request):', error.message);
+      dbInitPromise = null;
+      throw error;
+    });
+  }
+  return dbInitPromise;
+}
+
+app.use(async (req, res, next) => {
+  if (process.env.VERCEL) {
+    try {
+      await ensureDatabase();
+    } catch (error) {
+      return res.status(503).json({ error: 'Database not ready: ' + error.message });
+    }
+  }
+  next();
+});
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const storeRoutes = require('./routes/stores');
