@@ -96,7 +96,9 @@ app.get('/', (req, res) => {
       orders: '/api/orders',
       favorites: '/api/favorites',
       chat: '/api/chat',
-      notifications: '/api/notifications'
+      notifications: '/api/notifications',
+      admin: '/api/admin',
+      settings: '/api/settings'
     }
   });
 });
